@@ -62,3 +62,41 @@ if [[ "${WRT_TARGET^^}" == *"QUALCOMMAX"* ]]; then
 		echo "qualcommax set up nowifi successfully!"
 	fi
 fi
+
+#旁路由模式配置（注入uci-defaults，首次启动自动应用）
+#参数：旁路由IP 192.168.50.254 / 网关(主路由) 192.168.50.1 / DNS 192.168.50.1
+BYPASS_FILE="./package/base-files/files/etc/uci-defaults/99-bypass-router"
+mkdir -p "$(dirname "$BYPASS_FILE")"
+cat > "$BYPASS_FILE" <<'EOF'
+#!/bin/sh
+# Bypass router mode - auto config on first boot
+# 旁路由IP: 192.168.50.254  网关: 192.168.50.1  DNS: 192.168.50.1
+
+# LAN接口：静态IP，网关与DNS指向主路由
+uci set network.lan.proto='static'
+uci set network.lan.ipaddr='192.168.50.254'
+uci set network.lan.netmask='255.255.255.0'
+uci set network.lan.gateway='192.168.50.1'
+uci set network.lan.dns='192.168.50.1'
+uci -q delete network.lan.ip6assign
+uci commit network
+
+# 关闭LAN的DHCP（旁路由不分配IP，由主路由统一分配）
+uci set dhcp.lan.ignore='1'
+uci -q set dhcp.lan.dhcpv6='disabled'
+uci -q set dhcp.lan.ra='disabled'
+uci commit dhcp
+
+# LAN区域开启NAT伪装，确保经旁路由的流量能正确回主路由
+for z in $(uci show firewall 2>/dev/null | grep '=zone' | cut -d. -f2 | cut -d= -f1); do
+	if [ "$(uci -q get firewall.$z.name)" = "lan" ]; then
+		uci set firewall.$z.masq='1'
+		break
+	fi
+done
+uci commit firewall
+
+exit 0
+EOF
+chmod +x "$BYPASS_FILE"
+echo "Bypass router defaults injected: 192.168.50.254 via 192.168.50.1"
